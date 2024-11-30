@@ -31,6 +31,9 @@ typedef struct alarm_tag {
     int                 seconds;
     time_t              time;   /* seconds from EPOCH */
     char                message[64];
+    int                 alarm_id;
+    int                 group_id;
+
 } alarm_t;
 
 // Global synchronization objects
@@ -115,7 +118,7 @@ void *alarm_thread (void *arg)
 
         // Wait for the alarm's time
         now = time (NULL);
-        expired = 0 // Initialize expired
+        expired = 0; // Initialize expired
 
         if (alarm -> time > now) {
             cond_time.tv_sec = alarm->time;
