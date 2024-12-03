@@ -95,7 +95,7 @@ void view_alarms();
 
 //Helper functions for alarm list manipulation
 alarm_t *find_alarm(int alarm_id);
-_Bool remove_alarm(int alarm_id);
+bool remove_alarm(int alarm_id);
 
 /*
  * Insert alarm entry on list, in order.
@@ -233,30 +233,40 @@ void *alarm_group_display_creation(void *arg) {
     }
 }
 
+//Display Alarm Thread
 void *display_alarm_thread(void *arg) {
     if(arg == NULL){
         fprintf(stderr, "Error: arg is NULL\n");
         pthread_exit(NULL);
     }
+    //Get the groupid for this thread
     int group_id = *((int *) arg);
     free(arg);
     int status;
 
     while(1) {
+        //Start reading process and lock the alarm mutex
         start_read();
         status = pthread_mutex_lock(&alarm_mutex);
         if (status != 0) {
             err_abort(status, "Lock mutex");  
         }
+
+        //Traverse through the group threads to get the right group
         group_t *group = group_threads;
 
         while(group != NULL && group->group_id != group_id){
             group = group->next;
         }
+
+        //Traverse through the display list to handle each alarm assigned in this thread
         alarm_t **prev = &group->display_list, *current = *prev;
 
         while(current != NULL) {
+            //Create a temp alarm for comparision between alarm in display and alarm list
             alarm_t *temp = find_alarm(current->alarm_id);
+
+            //If statement print the corresponding message
             if(temp == NULL){
                 printf("Display Thread %ld Has Stopped Printing Message of Alarm(%d) at %ld: Group(%d) %d %s\n", pthread_self(), current->alarm_id, time(NULL), current->group_id, current->seconds, current->message);
                 *prev = current->link;
@@ -275,41 +285,55 @@ void *display_alarm_thread(void *arg) {
                 current -> message[sizeof(current -> message) - 1] = '\0';
                 printf("Display Thread %ld Starts to Print Changed Message Alarm(%d) at %ld: Group(%d) %d %s\n", pthread_self(), current->alarm_id, time(NULL), current->group_id, current->seconds, current->message);
             }
+
+            //In case the active status has not synchronized
             current->active = temp->active;
             *prev = current;
             current = current->link;
         }
+
+        //Stop the reading process and unlock the alarm mutex
         status = pthread_mutex_unlock(&alarm_mutex);
         if (status != 0) {
             err_abort(status, "Unlock mutex");
         }
         stop_read();
-        sleep(1);
+        sleep(1); //Check periodically
     }
     return NULL;
 }
 
+
+//Function to create a duplicate alarm
 alarm_t *duplicate_alarm(alarm_t *alarm){
+    //Initialize the duplicate alarm
     alarm_t *dup_alarm = (alarm_t*)malloc (sizeof (alarm_t));
+
+    //Copy the information from the original
     dup_alarm->active = alarm->active;
     dup_alarm->alarm_id = alarm->alarm_id;
     dup_alarm->group_id = alarm->group_id;
     strncpy(dup_alarm->message, alarm->message, sizeof(dup_alarm->message) - 1);
     dup_alarm -> message[sizeof(dup_alarm -> message) - 1] = '\0';
     dup_alarm->seconds = alarm->seconds;
-
+    
+    //Return the duplication
     return dup_alarm;
 }
 
+//Alarm group display creation thread
 void *alarm_group_display_creation_thread(void *arg) {
     int status;
     while(1){
+        //Start reading process and lock the alarm mutex
         start_read();
         
         status = pthread_mutex_lock(&alarm_mutex);
         if (status != 0) {
             err_abort(status, "Lock mutex");  
         }
+
+        //Traverse through alarm list to detect changes
         alarm_t *current = alarm_list;
 
         while(current != NULL){
@@ -319,14 +343,19 @@ void *alarm_group_display_creation_thread(void *arg) {
             group_t *group = group_threads;
             int exists = 0;
 
+            //Travers through the group threads
             while(group != NULL){
+
+                //Found a match group if but alarm might already assigned
                 if(group->group_id == group_id) {
                     exists = 1;
                     
+                    //Traverse through display list to check if assigned
                     alarm_t *temp = group->display_list;
                     while(temp != NULL && current->alarm_id != temp->alarm_id){
                         temp = temp->link;
                     }
+                    //The alarm has not been assigned to the display thread
                     if(temp == NULL){
                         alarm_t *new_alarm;
                         new_alarm = duplicate_alarm(current);
@@ -334,8 +363,10 @@ void *alarm_group_display_creation_thread(void *arg) {
                         group->display_list = new_alarm;
                         printf("Alarm Thread Display Alarm Thread %ld Assigned to Display Alarm(%d) at %ld: Group(%d) %d %s\n", group->thread_id, current->alarm_id, time(NULL), current->group_id, current->seconds, current->message);
                     }
+                    //Complete the traversal
                     break;
                 }
+                //Move to the next group
                 group = group->next;
             }
 
@@ -357,6 +388,7 @@ void *alarm_group_display_creation_thread(void *arg) {
                 new_group->next = group_threads;
                 group_threads = new_group;
 
+                //Create a new alarm and add to corresponding display thread
                 alarm_t *new_alarm;
                 new_alarm = duplicate_alarm(current);
                 new_alarm->link = NULL;
@@ -364,9 +396,11 @@ void *alarm_group_display_creation_thread(void *arg) {
 
                 printf("Alarm Group Display Creation Thread Created New Display Alarm Thread %ld for Alarm(%d) at %ld: Group(%d) %d %s\n", new_thread, current->alarm_id, time(NULL), group_id, current->seconds, current->message);
             }
+            //Move to the next alarm
             current = current->link;
         }
 
+        //Stop reading process and unlock the alarm mutex
         status = pthread_mutex_unlock(&alarm_mutex);
         if (status != 0) {
             err_abort(status, "Unlock mutex");
@@ -377,37 +411,47 @@ void *alarm_group_display_creation_thread(void *arg) {
     return NULL;
 }
 
+//Alarm group display removal thread
 void *alarm_group_display_removal(void*arg) {
     while(1){
+        //Start writing process
         start_write();
+
+        //Prepare to traverse through group thread
         group_t *current_group = group_threads;
         group_t *prev_group = NULL;
 
+        //Traverse through group thread
         while (current_group != NULL){
             int group_id = current_group->group_id;
 
+            //No more alarm in display thread detected
             if(current_group->display_list = NULL) {
                 pthread_cancel(current_group->thread_id);
                 printf("No More Alarm in Group(%d) Alarm Removal Thread Has Removed Display Alarm Thread %ld at %ld: Group(%d)\n", group_id, current_group->thread_id, time(NULL), group_id);
                 
+                //Remove the target group
                 if(prev_group != NULL) {
                     prev_group->next = current_group->next;
                 }else {
                     group_threads = current_group->next;
                 }
 
+                //Free the memory space
                 free(current_group);
                 
+                //Continue the remove process
                 if(prev_group != NULL) {
                     current_group = prev_group->next;
                 }else {
                     current_group = group_threads;
                 }
-            } else {
+            } else { //Alarm still exist in display thread
                 prev_group = current_group;
                 current_group = current_group->next;
             }
         }
+        //Stop writing process
         stop_write();
         sleep(1); //Periodic Check
     }
@@ -456,7 +500,7 @@ int main (int argc, char *argv[])
         
         // Parse the input as a command
         if (sscanf(line, "%15s", command) == 1) {
-            if (sscanf(line, "Start_Alarm(%d): Group(%d) %d %[^\n]", &alarm_id, &group_id, &seconds, message) == 4) {
+            if (sscanf(line, "Start_Alarm(%d): Group(%d) %d %[^\n]", &alarm_id, &group_id, &seconds, message) == 4) { //Start Alarm Operation
                 // Create and initialize a new alarm
                 alarm = (alarm_t*)malloc (sizeof (alarm_t));
                 if (alarm == NULL) {
@@ -491,7 +535,7 @@ int main (int argc, char *argv[])
                 }
                 printf("Alarm(%d) Inserted by Main Thread %ld Into Alarm List at %ld: Group(%d) %d %s\n", alarm->alarm_id, pthread_self(), time(NULL), alarm->group_id, alarm->seconds, alarm->message);
 
-            } else if (sscanf(line, "Change_Alarm(%d): Group(%d) %d %[^\n]", &alarm_id, &group_id, &seconds, message) == 4) {
+            } else if (sscanf(line, "Change_Alarm(%d): Group(%d) %d %[^\n]", &alarm_id, &group_id, &seconds, message) == 4) { //Change alarm operation
                 // Modify an existing alarm
                 status = pthread_mutex_lock(&alarm_mutex);
                 if (status != 0) {
@@ -519,7 +563,7 @@ int main (int argc, char *argv[])
                 if (status != 0) {
                     err_abort(status, "Unlock mutex");
                 }
-            } else if (sscanf(line, "Cancel_Alarm(%d)", &alarm_id) == 1) {
+            } else if (sscanf(line, "Cancel_Alarm(%d)", &alarm_id) == 1) { //Cancel alarm operation
                 status = pthread_mutex_lock(&alarm_mutex);
                 if (status != 0) {
                     err_abort(status, "Lock mutex");
@@ -531,7 +575,7 @@ int main (int argc, char *argv[])
                 if (status != 0) {
                     err_abort(status, "Unlock mutex");
                 }
-            } else if (sscanf(line, "Suspend_Alarm(%d)", &alarm_id) == 1) {
+            } else if (sscanf(line, "Suspend_Alarm(%d)", &alarm_id) == 1) { //Suspend alarm operation
                 status = pthread_mutex_lock(&alarm_mutex);
                 if (status != 0) {
                     err_abort(status, "Lock mutex");
@@ -543,7 +587,7 @@ int main (int argc, char *argv[])
                 if (status != 0) {
                     err_abort(status, "Unlock mutex");
                 }
-            } else if (sscanf(line, "Reactivate_Alarm(%d)", &alarm_id) == 1) {
+            } else if (sscanf(line, "Reactivate_Alarm(%d)", &alarm_id) == 1) { //Reactivate alarm operation
                 status = pthread_mutex_lock(&alarm_mutex);
                 if (status != 0) {
                     err_abort(status, "Lock mutex");
@@ -555,7 +599,7 @@ int main (int argc, char *argv[])
                 if (status != 0) {
                     err_abort(status, "Unlock mutex");
                 }
-            } else if (strcmp(line, "View_Alarms\n") == 0){
+            } else if (strcmp(line, "View_Alarms\n") == 0){ //View alarm operation
                 status = pthread_mutex_lock(&alarm_mutex);
                 if (status != 0) {
                     err_abort(status, "Lock mutex");
