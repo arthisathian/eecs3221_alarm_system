@@ -20,6 +20,7 @@
 #include <errno.h>
 //Added libraries (Hien L.)
 #include <semaphore.h>
+#include <stdbool.h>
 
 /*
  * The "alarm" structure now contains the time_t (time since the
@@ -95,7 +96,7 @@ void view_alarms();
 
 //Helper functions for alarm list manipulation
 alarm_t *find_alarm(int alarm_id);
-void remove_alarm(int alarm_id);
+_Bool remove_alarm(int alarm_id);
 
 /*
  * Insert alarm entry on list, in order.
@@ -234,6 +235,10 @@ void *alarm_group_display_creation(void *arg) {
 }
 
 void *display_alarm_thread(void *arg) {
+    if(arg == NULL){
+        fprintf(stderr, "Error: arg is NULL\n");
+        pthread_exit(NULL);
+    }
     int group_id = *((int *) arg);
     free(arg);
 
@@ -277,7 +282,11 @@ void *alarm_group_display_creation_thread(void *arg) {
             if(exists == 0){
                 //Create a new thread for this group
                 pthread_t new_thread;
-                int *group_id_ptr = malloc(sizeof(int));
+                int *group_id_ptr = malloc(sizeof(*group_id_ptr));
+                if(group_id_ptr == NULL){
+                    perror("malloc failed");
+                    exit(EXIT_FAILURE);
+                }
                 *group_id_ptr = group_id;
                 pthread_create(&new_thread, NULL, display_alarm_thread, group_id_ptr);
 
@@ -375,12 +384,6 @@ int main (int argc, char *argv[])
         err_abort(status, "Remove alarm group display thread");
     }
 
-    //Create the alarm group display thread
-    status = pthread_create (&display_thread, NULL, display_alarm_thread, NULL);
-    if (status != 0) {
-        err_abort(status, "Remove alarm group display thread");
-    }
-
     // Main loop to handle user commands
     while (1) {
         printf ("Alarm> ");
@@ -422,6 +425,8 @@ int main (int argc, char *argv[])
                 if (status != 0) {
                     err_abort(status, "Unlock mutex");
                 }
+                printf("Alarm(%d) Inserted by Main Thread %ld Into Alarm List at %ld: Group(%d) %d %s\n", alarm->alarm_id, pthread_self(), time(NULL), alarm->group_id, alarm->seconds, alarm->message);
+
             } else if (sscanf(line, "Change_Alarm(%d): Group(%d) %d %[^\n]", &alarm_id, &group_id, &seconds, message) == 4) {
                 // // Parse Change_Alarm command
                 // if (sscanf(line, "%*s(%d): Group(%d) %[^\n]", &alarm_id, &group_id, &seconds, message) != 4) {
@@ -443,7 +448,7 @@ int main (int argc, char *argv[])
                         current->time = time(NULL) + seconds;
                         strncpy(current->message, message, sizeof(current->message) - 1);
                         current->message[sizeof(current->message) - 1] = '\0';
-                        printf("Alarm(%d) updated successfully\n", alarm_id);
+                        printf("Alarm(%d) Changed at %ld: Group(%d) %d %s\n", current->alarm_id, time(NULL), current->group_id, current->seconds, current->message);
                         break;
                     }
                     current = current->link;
@@ -514,9 +519,10 @@ int main (int argc, char *argv[])
 
 //Remove alarm from the list
 void cancel_alarm(int alarm_id) {
-    remove_alarm(alarm_id);
-    alarm_t *alarm = find_alarm(alarm_id);
-    printf("Alarm(%d) Canceled at %ld: %d %s\n", alarm->alarm_id, time(NULL), alarm->seconds, alarm->message);
+    if(remove_alarm(alarm_id)){
+        alarm_t *alarm = find_alarm(alarm_id);
+        printf("Alarm(%d) Canceled at %ld: %d %s\n", alarm->alarm_id, time(NULL), alarm->seconds, alarm->message);
+    }
 }
 
 //Suspend alarm in the list
@@ -565,7 +571,7 @@ alarm_t *find_alarm(int alarm_id) {
 }
 
 //Helper function to remove alarm
-void remove_alarm(int alarm_id){
+bool remove_alarm(int alarm_id){
     int status;
     alarm_t **last = &alarm_list, *next = *last;
     
@@ -586,8 +592,10 @@ void remove_alarm(int alarm_id){
     if(next != NULL){
         *last = next->link; //Skip over the alarm being removed
         free(next); //free the memory associated with the removed alarm
+        return true;
     }else {
         //Handle case where no alarm with th given ID exists
         printf("Alarm with ID %d not found.\n", alarm_id);
+        return false;
     }
 }
