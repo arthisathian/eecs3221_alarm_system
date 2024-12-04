@@ -206,33 +206,6 @@ void *alarm_thread (void *arg)
     }
 }
 
-// Arthi S.
-void *alarm_group_display_creation(void *arg) {
-    int status;
-
-    while(1) {
-        status = pthread_mutex_lock(&alarm_mutex);
-        if (status != 0) {
-            err_abort(status, "Lock mutex");  
-        }
-
-        // Traverse list and create display threads for the new groups
-        alarm_t *current = alarm_list;
-        while (current != NULL) {
-            // Display message
-            printf("Group(%d) alarm ready: %s\n", current -> group_id, current -> message);
-            current = current -> link;
-        }
-
-        status = pthread_mutex_unlock(&alarm_mutex);
-        if (status != 0) {
-            err_abort(status, "Unlock mutex");
-        }
-
-        sleep(1);   // Preiodically recheck the alarm list
-    }
-}
-
 //Display Alarm Thread
 void *display_alarm_thread(void *arg) {
     if(arg == NULL){
@@ -394,6 +367,7 @@ void *alarm_group_display_creation_thread(void *arg) {
                 new_alarm->link = NULL;
                 new_group->display_list = new_alarm;
 
+                //Print the message to console
                 printf("Alarm Group Display Creation Thread Created New Display Alarm Thread %ld for Alarm(%d) at %ld: Group(%d) %d %s\n", new_thread, current->alarm_id, time(NULL), group_id, current->seconds, current->message);
             }
             //Move to the next alarm
@@ -412,7 +386,7 @@ void *alarm_group_display_creation_thread(void *arg) {
 }
 
 //Alarm group display removal thread
-void *alarm_group_display_removal(void*arg) {
+void *alarm_group_display_removal_thread(void*arg) {
     while(1){
         //Start writing process
         start_write();
@@ -483,7 +457,7 @@ int main (int argc, char *argv[])
     }
 
     //Create the alarm group display removal thread
-    status = pthread_create (&display_removal_thread, NULL, alarm_group_display_removal, NULL);
+    status = pthread_create (&display_removal_thread, NULL, alarm_group_display_removal_thread, NULL);
     if (status != 0) {
         err_abort(status, "Remove alarm group display thread");
     }
